@@ -390,71 +390,69 @@ function updateStats() {
 }
 
 // ══════════════════════════════════════════════════════
-// AI – ORGANIZE BOOKMARKS (LOCAL)
+// AI – ORGANIZE BOOKMARKS
 // ══════════════════════════════════════════════════════
 async function organizeWithAI() {
+  if (!State.apiKey) {
+    showToast('⚠ Set your API key in Settings first');
+    chrome.runtime.openOptionsPage();
+    return;
+  }
   if (State.allBookmarks.length === 0) {
     showToast('No bookmarks to organize');
     return;
   }
 
-  // Check if we have enough bookmarks for meaningful clustering
-  const count = State.allBookmarks.length;
-  showLoading(`Analyzing ${count} bookmarks locally...`);
+  showLoading('Analyzing your bookmarks with AI…');
 
-  // Prepare data - we can send all or slice. Local processing is fast.
-  // 500 is a safe batch.
-  const sample = State.allBookmarks.slice(0, 500).map(b => ({
+  // Prepare bookmark data (limit to 200 for performance)
+  const sample = State.allBookmarks.slice(0, 200).map(b => ({
     id: b.id,
     title: b.title,
     url: b.url,
   }));
 
-  // Send to background script for processing
-  chrome.runtime.sendMessage({ 
-    action: 'organizeBookmarks', 
-    bookmarks: sample 
-  }, (response) => {
-    hideLoading();
+  const prompt = `You are a bookmark organizer. Given this list of browser bookmarks, group them into meaningful topic clusters (8–15 topics). 
+Each topic should have a clear, concise name (2-4 words max).
 
-    if (chrome.runtime.lastError) {
-      console.error('Runtime error:', chrome.runtime.lastError);
-      showToast('Error: ' + chrome.runtime.lastError.message);
-      return;
-    }
+Respond ONLY with valid JSON in this exact format:
+{
+  "topics": {
+    "Topic Name": ["bookmark_id_1", "bookmark_id_2", ...],
+    "Another Topic": ["bookmark_id_3", ...]
+  }
+}
 
-    if (response && response.success) {
-      const grouped = response.data; // { "Topic": [ {id, title...} ] }
-      
-      // Re-map to full bookmark objects
-      const topicsWithData = {};
-      let total = 0;
-      
-      for (const [topic, items] of Object.entries(grouped)) {
-        // Enforce a minimum cluster size of 2 to avoid noise
-        if (items.length < 2) continue;
+Bookmarks:
+${JSON.stringify(sample, null, 2)}`;
 
-        const fullItems = items
-          .map(i => State.allBookmarks.find(b => b.id === i.id))
-          .filter(Boolean);
-            
-        if (fullItems.length > 0) {
-          topicsWithData[topic] = fullItems;
-          total += fullItems.length;
-        }
+  try {
+    const response = await callAI(prompt, 2000);
+    const parsed = JSON.parse(response);
+
+    if (!parsed.topics) throw new Error('Invalid AI response structure');
+
+    // Convert id arrays back to bookmark objects
+    const topicsWithData = {};
+    for (const [topic, ids] of Object.entries(parsed.topics)) {
+      const bookmarks = ids
+        .map(id => State.allBookmarks.find(b => b.id === id))
+        .filter(Boolean);
+      if (bookmarks.length > 0) {
+        topicsWithData[topic] = bookmarks;
       }
-
-      // Handle orphans or small clusters if you want, or just ignore.
-      
-      saveTopics(topicsWithData);
-      showToast(`✓ Organized ${total} bookmarks into ${Object.keys(topicsWithData).length} topics`);
-      renderTopicsTab();
-      updateStats();
-    } else {
-      showToast('Organization failed. See console.');
-      console.error('Cluster error:', response?.error);
     }
-  });
+
+    saveTopics(topicsWithData);
+    hideLoading();
+    showToast(`✓ Organized into ${Object.keys(topicsWithData).length} topics`);
+    renderTopicsTab();
+    updateStats();
+  } catch (err) {
+    hideLoading();
+    showToast('Error organizing bookmarks. Check your API key.');
+    console.error('AI organize error:', err);
+  }
 }
 
 // ══════════════════════════════════════════════════════

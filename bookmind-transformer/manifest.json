@@ -16,11 +16,7 @@
     "https://api.openai.com/*"
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
-  },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co"
+    "service_worker": "background.js"
   },
   "action": {
     "default_popup": "popup.html",
