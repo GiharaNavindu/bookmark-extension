@@ -12,6 +12,7 @@ const State = {
   topics: {},              // { topicName: [bookmark, ...] }
   guides: [],              // saved guides
   apiKey: '',
+  aiProvider: 'anthropic',
   currentTab: 'all',
   searchQuery: '',
   rediscoverPool: [],
@@ -38,8 +39,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ══════════════════════════════════════════════════════
 async function loadSettings() {
   return new Promise(resolve => {
-    chrome.storage.local.get(['apiKey'], result => {
+    chrome.storage.local.get(['apiKey', 'aiProvider'], result => {
       State.apiKey = result.apiKey || '';
+      State.aiProvider = result.aiProvider || 'anthropic';
       resolve();
     });
   });
@@ -146,39 +148,83 @@ function createBookmarkCard(bm, opts = {}) {
   let domain = '';
   try { domain = new URL(bm.url).hostname.replace('www.', ''); } catch {}
 
-  let html = '';
+  // 1. Checkbox
   if (opts.selectable) {
-    html += `<div class="bm-checkbox"></div>`;
+    const cb = document.createElement('div');
+    cb.className = 'bm-checkbox';
+    card.appendChild(cb);
   }
+
+  // 2. Favicon
   if (favicon) {
-    html += `<img class="bookmark-favicon" src="${favicon}" onerror="this.style.display='none'" loading="lazy"/>`;
+    const img = document.createElement('img');
+    img.className = 'bookmark-favicon';
+    img.loading = 'lazy';
+    img.src = favicon;
+    
+    // safe onError handler
+    img.onerror = () => { img.style.display = 'none'; };
+    
+    card.appendChild(img);
   } else {
-    html += `<div class="favicon-fallback">${domain.charAt(0).toUpperCase()}</div>`;
+    const fallback = document.createElement('div');
+    fallback.className = 'favicon-fallback';
+    fallback.textContent = domain.charAt(0).toUpperCase();
+    card.appendChild(fallback);
   }
-  html += `
-    <div class="bookmark-body">
-      <div class="bookmark-title">${escapeHtml(bm.title)}</div>
-      <div class="bookmark-url">${escapeHtml(domain)}</div>
-      <div class="bookmark-meta">
-        ${topic ? `<span class="topic-tag">${escapeHtml(topic)}</span>` : ''}
-        <span class="bookmark-date">${formatDate(bm.dateAdded)}</span>
-      </div>
-    </div>
-  `;
+
+  // 3. Body
+  const body = document.createElement('div');
+  body.className = 'bookmark-body';
+  
+  const titleDiv = document.createElement('div');
+  titleDiv.className = 'bookmark-title';
+  titleDiv.textContent = bm.title;
+  body.appendChild(titleDiv);
+
+  const urlDiv = document.createElement('div');
+  urlDiv.className = 'bookmark-url';
+  urlDiv.textContent = domain;
+  body.appendChild(urlDiv);
+
+  const metaDiv = document.createElement('div');
+  metaDiv.className = 'bookmark-meta';
+  
+  if (topic) {
+    const topicSpan = document.createElement('span');
+    topicSpan.className = 'topic-tag';
+    topicSpan.textContent = topic;
+    metaDiv.appendChild(topicSpan);
+  }
+  
+  const dateSpan = document.createElement('span');
+  dateSpan.className = 'bookmark-date';
+  dateSpan.textContent = formatDate(bm.dateAdded);
+  metaDiv.appendChild(dateSpan);
+  
+  body.appendChild(metaDiv);
+  card.appendChild(body);
+
+  // 4. Action Button
   if (!opts.selectable) {
-    html += `<button class="bookmark-open" title="Open">↗</button>`;
-  }
-
-  card.innerHTML = html;
-
-  if (opts.selectable) {
-    card.addEventListener('click', () => toggleGuideSelection(card, bm));
-  } else {
-    const openBtn = card.querySelector('.bookmark-open');
-    openBtn?.addEventListener('click', e => {
+    const btn = document.createElement('button');
+    btn.className = 'bookmark-open';
+    btn.title = 'Open';
+    btn.textContent = '↗';
+    
+    // Add event listener directly to button
+    btn.addEventListener('click', e => {
       e.stopPropagation();
       chrome.tabs.create({ url: bm.url });
     });
+    
+    card.appendChild(btn);
+  }
+
+  // 5. Card Click Events
+  if (opts.selectable) {
+    card.addEventListener('click', () => toggleGuideSelection(card, bm));
+  } else {
     card.addEventListener('click', () => chrome.tabs.create({ url: bm.url }));
   }
 
@@ -575,6 +621,18 @@ function deleteGuide(idx) {
 // AI HELPER
 // ══════════════════════════════════════════════════════
 async function callAI(prompt, maxTokens = 1000) {
+  const provider = State.aiProvider || 'anthropic';
+
+  if (provider === 'gemini') {
+    return callGemini(prompt, maxTokens);
+  } else if (provider === 'openai') {
+    return callOpenAI(prompt, maxTokens);
+  } else {
+    return callAnthropic(prompt, maxTokens);
+  }
+}
+
+async function callAnthropic(prompt, maxTokens) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -583,7 +641,7 @@ async function callAI(prompt, maxTokens = 1000) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-20250514', // Keeping original model ID
       max_tokens: maxTokens,
       messages: [{ role: 'user', content: prompt }],
     }),
@@ -591,15 +649,86 @@ async function callAI(prompt, maxTokens = 1000) {
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `API error ${response.status}`);
+    throw new Error(err.error?.message || `Anthropic API error ${response.status}`);
   }
 
   const data = await response.json();
   const text = data.content.map(b => b.text || '').join('');
+  return cleanAIOutput(text);
+}
 
+async function callGemini(prompt, maxTokens) {
+  const modelsToTry = [
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-pro' // Standard alias for 1.0 Pro
+  ];
+
+  let lastError = null;
+
+  for (const model of modelsToTry) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${State.apiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            maxOutputTokens: maxTokens,
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error?.message || `API Error ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return cleanAIOutput(text);
+
+    } catch (err) {
+      console.warn(`Gemini model ${model} failed:`, err.message);
+      lastError = err;
+      // Continue to next model in loop
+    }
+  }
+
+  // If all failed
+  throw lastError || new Error('All Gemini models failed');
+}
+
+async function callOpenAI(prompt, maxTokens) {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${State.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini', 
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error?.message || `OpenAI API error ${response.status}`);
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content || '';
+  return cleanAIOutput(text);
+}
+
+function cleanAIOutput(text) {
   // Strip markdown code fences if present
   return text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
 }
+
 
 // ══════════════════════════════════════════════════════
 // EVENTS
