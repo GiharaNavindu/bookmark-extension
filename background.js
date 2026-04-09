@@ -177,9 +177,8 @@ function flattenBookmarks(nodes, results = []) {
 function getSettings() {
   return new Promise(resolve => {
     chrome.storage.local.get(
-      ['apiKey', 'reminderInterval', 'remindersEnabled'],
+      ['reminderInterval', 'remindersEnabled'],
       result => resolve({
-        apiKey:            result.apiKey || '',
         reminderInterval:  result.reminderInterval || 24,
         remindersEnabled:  result.remindersEnabled !== false, // default true
       })

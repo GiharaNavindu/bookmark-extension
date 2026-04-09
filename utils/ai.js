@@ -6,7 +6,8 @@ import { env, pipeline } from './transformers.js';
 // Configure Transformers.js
 // We desire to run locally. We disable local models check to force fetching from remote (cached)
 // or local if available.
-env.allowLocalModels = false;
+env.allowLocalModels = true;
+env.allowRemoteModels = true;
 env.useBrowserCache = true;
 
 /**
@@ -14,12 +15,46 @@ env.useBrowserCache = true;
  */
 let bgPipeline = null;
 
+const EMBEDDING_MODELS = [
+  'Xenova/all-MiniLM-L6-v2',
+  'Xenova/bge-small-en-v1.5',
+];
+
 async function getPipeline() {
   if (!bgPipeline) {
-    // xenova/all-MiniLM-L6-v2 is the model
-    bgPipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    bgPipeline = await createPipelineWithFallback();
   }
   return bgPipeline;
+}
+
+async function createPipelineWithFallback() {
+  let lastError = null;
+
+  for (const modelId of EMBEDDING_MODELS) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return await pipeline('feature-extraction', modelId);
+      } catch (error) {
+        lastError = error;
+        if (!isRetryable(error) || attempt === 3) break;
+        await delay(500 * attempt);
+      }
+    }
+  }
+
+  throw new Error(
+    `Unable to load embedding model from Hugging Face. This is often temporary (503/service unavailable). ` +
+    `Please check internet/VPN/firewall and retry in a minute. Last error: ${lastError?.message || 'unknown error'}`
+  );
+}
+
+function isRetryable(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes('service unavailable') || msg.includes('503') || msg.includes('network');
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**

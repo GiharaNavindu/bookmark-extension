@@ -39,47 +39,26 @@
       </header>
 
       <div class="sections">
-        <!-- ─── AI Provider ─── -->
+        <!-- ─── Local AI Status ─── -->
         <section class="card">
           <div class="card-header">
-            <div class="card-icon">🔑</div>
+            <div class="card-icon">🧠</div>
             <div>
-              <h2>AI Provider Settings</h2>
+              <h2>Local AI Intelligence</h2>
               <p>
-                Choose your AI model provider and enter the API key to power
-                BookMind.
+                BookMind uses local AI models running directly in your browser
+                to organize your bookmarks. Your data never leaves your device.
               </p>
             </div>
           </div>
-
           <div class="field">
-            <label for="ai-provider">Select Provider</label>
-            <select id="ai-provider">
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="openai">OpenAI (ChatGPT)</option>
-            </select>
-          </div>
-
-          <div class="field">
-            <label for="api-key">API Key</label>
-            <div class="input-row">
-              <input
-                type="password"
-                id="api-key"
-                placeholder="Enter your API key..."
-                autocomplete="off"
-              />
-              <button
-                class="btn-toggle-visibility"
-                id="btn-show-key"
-                title="Show/hide key"
+            <div class="field-hint" style="margin-top: 0">
+              Status:
+              <span
+                id="model-status"
+                style="color: var(--success); font-weight: 600"
+                >Ready</span
               >
-                👁
-              </button>
-            </div>
-            <div class="field-hint" id="api-key-hint">
-              Select a provider to see where to get your key.
             </div>
           </div>
         </section>
