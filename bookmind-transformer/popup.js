@@ -11,8 +11,6 @@ const State = {
   allBookmarks: [],        // flat list of all bookmarks
   topics: {},              // { topicName: [bookmark, ...] }
   guides: [],              // saved guides
-  apiKey: '',
-  aiProvider: 'anthropic',
   currentTab: 'all',
   searchQuery: '',
   rediscoverPool: [],
@@ -23,7 +21,6 @@ const State = {
 // INIT
 // ══════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadSettings();
   await loadBookmarks();
   await loadTopics();
   await loadGuides();
@@ -37,15 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ══════════════════════════════════════════════════════
 // SETTINGS / STORAGE HELPERS
 // ══════════════════════════════════════════════════════
-async function loadSettings() {
-  return new Promise(resolve => {
-    chrome.storage.local.get(['apiKey', 'aiProvider'], result => {
-      State.apiKey = result.apiKey || '';
-      State.aiProvider = result.aiProvider || 'anthropic';
-      resolve();
-    });
-  });
-}
+// Removed API key loading since we are local-only
 
 async function loadTopics() {
   return new Promise(resolve => {
@@ -271,11 +260,7 @@ function renderTopicsTab() {
   const topicEntries = Object.entries(State.topics);
 
   if (topicEntries.length === 0) {
-    if (!State.apiKey) {
-      banner.style.display = 'flex';
-    } else {
-      banner.style.display = 'flex';
-    }
+    banner.style.display = 'flex';
     empty.style.display = 'none';
   } else {
     banner.style.display = 'none';
@@ -390,69 +375,71 @@ function updateStats() {
 }
 
 // ══════════════════════════════════════════════════════
-// AI – ORGANIZE BOOKMARKS
+// AI – ORGANIZE BOOKMARKS (LOCAL)
 // ══════════════════════════════════════════════════════
 async function organizeWithAI() {
-  if (!State.apiKey) {
-    showToast('⚠ Set your API key in Settings first');
-    chrome.runtime.openOptionsPage();
-    return;
-  }
   if (State.allBookmarks.length === 0) {
     showToast('No bookmarks to organize');
     return;
   }
 
-  showLoading('Analyzing your bookmarks with AI…');
+  // Check if we have enough bookmarks for meaningful clustering
+  const count = State.allBookmarks.length;
+  showLoading(`Analyzing ${count} bookmarks locally...`);
 
-  // Prepare bookmark data (limit to 200 for performance)
-  const sample = State.allBookmarks.slice(0, 200).map(b => ({
+  // Prepare data - we can send all or slice. Local processing is fast.
+  // 500 is a safe batch.
+  const sample = State.allBookmarks.slice(0, 500).map(b => ({
     id: b.id,
     title: b.title,
     url: b.url,
   }));
 
-  const prompt = `You are a bookmark organizer. Given this list of browser bookmarks, group them into meaningful topic clusters (8–15 topics). 
-Each topic should have a clear, concise name (2-4 words max).
+  // Send to background script for processing
+  chrome.runtime.sendMessage({ 
+    action: 'organizeBookmarks', 
+    bookmarks: sample 
+  }, (response) => {
+    hideLoading();
 
-Respond ONLY with valid JSON in this exact format:
-{
-  "topics": {
-    "Topic Name": ["bookmark_id_1", "bookmark_id_2", ...],
-    "Another Topic": ["bookmark_id_3", ...]
-  }
-}
-
-Bookmarks:
-${JSON.stringify(sample, null, 2)}`;
-
-  try {
-    const response = await callAI(prompt, 2000);
-    const parsed = JSON.parse(response);
-
-    if (!parsed.topics) throw new Error('Invalid AI response structure');
-
-    // Convert id arrays back to bookmark objects
-    const topicsWithData = {};
-    for (const [topic, ids] of Object.entries(parsed.topics)) {
-      const bookmarks = ids
-        .map(id => State.allBookmarks.find(b => b.id === id))
-        .filter(Boolean);
-      if (bookmarks.length > 0) {
-        topicsWithData[topic] = bookmarks;
-      }
+    if (chrome.runtime.lastError) {
+      console.error('Runtime error:', chrome.runtime.lastError);
+      showToast('Error: ' + chrome.runtime.lastError.message);
+      return;
     }
 
-    saveTopics(topicsWithData);
-    hideLoading();
-    showToast(`✓ Organized into ${Object.keys(topicsWithData).length} topics`);
-    renderTopicsTab();
-    updateStats();
-  } catch (err) {
-    hideLoading();
-    showToast('Error organizing bookmarks. Check your API key.');
-    console.error('AI organize error:', err);
-  }
+    if (response && response.success) {
+      const grouped = response.data; // { "Topic": [ {id, title...} ] }
+      
+      // Re-map to full bookmark objects
+      const topicsWithData = {};
+      let total = 0;
+      
+      for (const [topic, items] of Object.entries(grouped)) {
+        // Enforce a minimum cluster size of 2 to avoid noise
+        if (items.length < 2) continue;
+
+        const fullItems = items
+          .map(i => State.allBookmarks.find(b => b.id === i.id))
+          .filter(Boolean);
+            
+        if (fullItems.length > 0) {
+          topicsWithData[topic] = fullItems;
+          total += fullItems.length;
+        }
+      }
+
+      // Handle orphans or small clusters if you want, or just ignore.
+      
+      saveTopics(topicsWithData);
+      showToast(`✓ Organized ${total} bookmarks into ${Object.keys(topicsWithData).length} topics`);
+      renderTopicsTab();
+      updateStats();
+    } else {
+      showToast('Organization failed. See console.');
+      console.error('Cluster error:', response?.error);
+    }
+  });
 }
 
 // ══════════════════════════════════════════════════════
@@ -494,10 +481,6 @@ function updateGuideCounter() {
 }
 
 async function generateGuide() {
-  if (!State.apiKey) {
-    showToast('⚠ Set your API key in Settings first');
-    return;
-  }
   const selectedBookmarks = State.allBookmarks
     .filter(b => State.guideSelectedIds.has(b.id));
 
@@ -507,59 +490,39 @@ async function generateGuide() {
   }
 
   closeModal('guide-modal');
-  showLoading('Generating your guide with AI…');
+  showLoading('Creating guide...');
 
-  const bookmarkList = selectedBookmarks.map(b => `- Title: ${b.title}\n  URL: ${b.url}`).join('\n');
+  // Simple local guide generation (No LLM)
+  const guide = {
+    id: Date.now().toString(),
+    title: `Guide: ${selectedBookmarks[0].title.slice(0, 20)}... and more`,
+    overview: `A collection of ${selectedBookmarks.length} resources curated from your bookmarks.`,
+    tags: ["collection"],
+    sections: selectedBookmarks.map(b => ({
+      heading: b.title,
+      description: "",
+      url: b.url,
+      keyPoints: []
+    })),
+    createdAt: Date.now(),
+    bookmarkCount: selectedBookmarks.length,
+    takeaways: [],
+    learningPath: "Review these items in order."
+  };
+  
+  guide.rawMarkdown = formatGuideToHTML(guide, selectedBookmarks);
 
-  const prompt = `You are a knowledgeable learning guide creator. Given these bookmarked web pages, create a comprehensive, structured learning guide that helps someone understand the topic deeply.
+  const guides = [guide, ...State.guides];
+  saveGuides(guides);
 
-Bookmarks:
-${bookmarkList}
+  hideLoading();
+  updateStats();
+  renderGuidesTab();
+  switchTab('guides');
+  showToast('✓ Guide created!');
 
-Create a guide in this EXACT JSON format:
-{
-  "title": "A compelling guide title (10 words max)",
-  "overview": "2-3 sentence overview of what this guide covers",
-  "tags": ["tag1", "tag2", "tag3"],
-  "sections": [
-    {
-      "heading": "Section heading",
-      "description": "What this resource covers and why it's important",
-      "url": "the exact URL from the bookmarks",
-      "keyPoints": ["point 1", "point 2", "point 3"]
-    }
-  ],
-  "takeaways": ["key takeaway 1", "key takeaway 2", "key takeaway 3", "key takeaway 4"],
-  "learningPath": "Suggested order and approach for going through these resources (2-3 sentences)"
-}
-
-Respond ONLY with valid JSON. No markdown, no extra text.`;
-
-  try {
-    const response = await callAI(prompt, 1500);
-    const guide = JSON.parse(response);
-
-    guide.id          = Date.now().toString();
-    guide.createdAt   = Date.now();
-    guide.bookmarkCount = selectedBookmarks.length;
-    guide.rawMarkdown = formatGuideToHTML(guide, selectedBookmarks);
-
-    const guides = [guide, ...State.guides];
-    saveGuides(guides);
-
-    hideLoading();
-    updateStats();
-    renderGuidesTab();
-    switchTab('guides');
-    showToast('✓ Guide created!');
-
-    // Open guide immediately
-    setTimeout(() => openGuideView(guide), 300);
-  } catch (err) {
-    hideLoading();
-    showToast('Error generating guide. Try again.');
-    console.error('Guide generation error:', err);
-  }
+  // Open guide immediately
+  setTimeout(() => openGuideView(guide), 300);
 }
 
 function formatGuideToHTML(guide, bookmarks) {
@@ -571,25 +534,10 @@ function formatGuideToHTML(guide, bookmarks) {
     html += `
       <div class="section-block">
         <h3>${escapeHtml(section.heading)}</h3>
-        <p>${escapeHtml(section.description)}</p>
-        <ul>${(section.keyPoints || []).map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>
         <a class="guide-link" href="${escapeHtml(section.url)}" target="_blank">↗ Open resource</a>
       </div>
     `;
   });
-
-  if (guide.learningPath) {
-    html += `<h2>🗺 Learning Path</h2><p>${escapeHtml(guide.learningPath)}</p>`;
-  }
-
-  if (guide.takeaways?.length) {
-    html += `
-      <div class="key-takeaways">
-        <h2>✦ Key Takeaways</h2>
-        <ul>${guide.takeaways.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ul>
-      </div>
-    `;
-  }
 
   return html;
 }
@@ -617,119 +565,7 @@ function deleteGuide(idx) {
   showToast('Guide deleted');
 }
 
-// ══════════════════════════════════════════════════════
-// AI HELPER
-// ══════════════════════════════════════════════════════
-async function callAI(prompt, maxTokens = 1000) {
-  const provider = State.aiProvider || 'anthropic';
-
-  if (provider === 'gemini') {
-    return callGemini(prompt, maxTokens);
-  } else if (provider === 'openai') {
-    return callOpenAI(prompt, maxTokens);
-  } else {
-    return callAnthropic(prompt, maxTokens);
-  }
-}
-
-async function callAnthropic(prompt, maxTokens) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': State.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514', // Keeping original model ID
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Anthropic API error ${response.status}`);
-  }
-
-  const data = await response.json();
-  const text = data.content.map(b => b.text || '').join('');
-  return cleanAIOutput(text);
-}
-
-async function callGemini(prompt, maxTokens) {
-  const modelsToTry = [
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-pro' // Standard alias for 1.0 Pro
-  ];
-
-  let lastError = null;
-
-  for (const model of modelsToTry) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${State.apiKey}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: maxTokens,
-          }
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `API Error ${response.status}`);
-      }
-
-      const data = await response.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      return cleanAIOutput(text);
-
-    } catch (err) {
-      console.warn(`Gemini model ${model} failed:`, err.message);
-      lastError = err;
-      // Continue to next model in loop
-    }
-  }
-
-  // If all failed
-  throw lastError || new Error('All Gemini models failed');
-}
-
-async function callOpenAI(prompt, maxTokens) {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${State.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini', 
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `OpenAI API error ${response.status}`);
-  }
-
-  const data = await response.json();
-  const text = data.choices?.[0]?.message?.content || '';
-  return cleanAIOutput(text);
-}
-
-function cleanAIOutput(text) {
-  // Strip markdown code fences if present
-  return text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-}
-
-
+// AI Functions Removed - Local Only
 // ══════════════════════════════════════════════════════
 // EVENTS
 // ══════════════════════════════════════════════════════

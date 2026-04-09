@@ -35,12 +35,12 @@ _(Do NOT delete this folder — Chrome loads the extension from it)_
 
 Click the Extensions puzzle icon → Click the pin next to **BookMind**
 
-### Step 4 – Set your API Key
+### Step 4 – First Local Model Download
 
 1. Click the BookMind icon
-2. Click the Settings icon (top-right of popup)
-3. Paste your **Anthropic API key** (get one free at [console.anthropic.com](https://console.anthropic.com))
-4. Click **Save Settings**
+2. Click **✦ Organize** once
+3. Wait for the first model download to complete (first run only)
+4. Next runs will use cache and be faster
 
 ---
 
@@ -75,13 +75,13 @@ Click the Extensions puzzle icon → Click the pin next to **BookMind**
 
 ## Settings Reference
 
-| Setting                | Description                                                                            |
-| ---------------------- | -------------------------------------------------------------------------------------- |
-| **API Key**            | Your Anthropic API key (stored locally, never sent to any server other than Anthropic) |
-| **Enable reminders**   | Toggle background bookmark reminders on/off                                            |
-| **Reminder frequency** | How often to receive reminder notifications (6h – weekly)                              |
-| **Guide style**        | Comprehensive / Concise / Technical / Beginner-friendly                                |
-| **Guide language**     | Language for AI-generated guide text                                                   |
+| Setting                | Description                                                 |
+| ---------------------- | ----------------------------------------------------------- |
+| **Local model**        | Downloaded once and cached in-browser (no API key required) |
+| **Enable reminders**   | Toggle background bookmark reminders on/off                 |
+| **Reminder frequency** | How often to receive reminder notifications (6h – weekly)   |
+| **Guide style**        | Comprehensive / Concise / Technical / Beginner-friendly     |
+| **Guide language**     | Language for AI-generated guide text                        |
 
 ---
 
@@ -100,13 +100,12 @@ bookmind-extension/
 └── icons/               ← Extension icons (16, 32, 48, 128px)
 ```
 
-### How AI Integration Works
+### How Local AI Integration Works
 
-- All AI calls go directly to `api.anthropic.com/v1/messages`
-- Your API key is stored in `chrome.storage.local` (browser-local only)
-- Model used: `claude-sonnet-4-20250514`
-- **Organization prompt**: Sends bookmark titles+URLs → receives JSON topic clusters
-- **Guide prompt**: Sends selected bookmark details → receives structured guide JSON
+- Uses Transformers.js in-browser with embedding model loading from Hugging Face
+- No Anthropic/OpenAI/Gemini API calls for topic organization
+- Embeddings are clustered with local k-means
+- If model download fails with `Service unavailable`, retry after a short delay
 
 ### Background Reminders
 

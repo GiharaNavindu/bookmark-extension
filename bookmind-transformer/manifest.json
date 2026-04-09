@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "BookMind – Smart Bookmark Manager",
+  "name": "BookMind – Transformer Local",
   "version": "1.0.0",
   "description": "AI-powered bookmark manager: organizes by topic, sends reminders, and builds learning guides from your saved pages.",
   "permissions": [
@@ -11,12 +11,18 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://api.anthropic.com/*",
-    "https://generativelanguage.googleapis.com/*",
-    "https://api.openai.com/*"
+    "https://cdn.jsdelivr.net/*",
+    "https://huggingface.co/*",
+    "https://*.huggingface.co/*",
+    "https://*.hf.co/*",
+    "https://cas-bridge.xethub.hf.co/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://cas-bridge.xethub.hf.co"
   },
   "action": {
     "default_popup": "popup.html",

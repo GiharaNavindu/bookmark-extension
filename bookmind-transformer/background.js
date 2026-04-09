@@ -3,7 +3,36 @@
  * Handles: periodic bookmark reminders, notification clicks, alarm scheduling.
  */
 
+import { clusterBookmarks } from './utils/ai.js';
+
 const ALARM_NAME = 'bookmind-reminder';
+
+// ══════════════════════════════════════════════════════
+// MESSAGE LISTENER (AI TASKS)
+// ══════════════════════════════════════════════════════
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'organizeBookmarks') {
+    // Perform clustering in background
+    (async () => {
+      try {
+        const result = await clusterBookmarks(message.bookmarks);
+        // The popup expects { topics: { "Topic Name": ["id1", "id2"] } } 
+        // OR the full objects. Let's see what popup expects.
+        // It expects { topics: { "Name": ["id"...] } } from the LLM prompt.
+        // But here we can return the structure directly.
+        // Let's modify the popup to handle { "Topic Name": [bookmarkObj...] } directly
+        // OR map it.
+        
+        // Let's return the grouped object: { "Topic A": [b1, b2], "Topic B": [b3] }
+        sendResponse({ success: true, data: result });
+      } catch (error) {
+        console.error('Clustering error:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true; // Keep channel open for async response
+  }
+});
 
 // ══════════════════════════════════════════════════════
 // INSTALL / STARTUP
@@ -148,9 +177,8 @@ function flattenBookmarks(nodes, results = []) {
 function getSettings() {
   return new Promise(resolve => {
     chrome.storage.local.get(
-      ['apiKey', 'reminderInterval', 'remindersEnabled'],
+      ['reminderInterval', 'remindersEnabled'],
       result => resolve({
-        apiKey:            result.apiKey || '',
         reminderInterval:  result.reminderInterval || 24,
         remindersEnabled:  result.remindersEnabled !== false, // default true
       })

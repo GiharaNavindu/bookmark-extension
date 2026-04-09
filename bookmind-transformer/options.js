@@ -1,9 +1,9 @@
 /**
  * BookMind – options.js
- * Settings page logic: save/load API key, reminder settings, data management.
+ * Settings page logic: reminder settings, data management.
  */
 
-const SETTINGS_KEYS = ['apiKey', 'aiProvider', 'reminderInterval', 'remindersEnabled', 'guideStyle', 'guideLanguage'];
+const SETTINGS_KEYS = ['reminderInterval', 'remindersEnabled', 'guideStyle', 'guideLanguage'];
 
 // ══════════════════════════════════════════════════════
 // INIT
@@ -20,8 +20,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadSettings() {
   return new Promise(resolve => {
     chrome.storage.local.get(SETTINGS_KEYS, result => {
-      if (result.apiKey)            el('api-key').value = result.apiKey;
-      if (result.aiProvider)        el('ai-provider').value = result.aiProvider;
       if (result.reminderInterval)  el('reminder-interval').value = String(result.reminderInterval);
       if (result.guideStyle)        el('guide-style').value = result.guideStyle;
       if (result.guideLanguage)     el('guide-language').value = result.guideLanguage;
@@ -29,9 +27,6 @@ async function loadSettings() {
       el('reminders-enabled').checked = result.remindersEnabled !== false;
       toggleIntervalField(el('reminders-enabled').checked);
       
-      // Update UI based on initial provider
-      updateProviderUI();
-
       resolve();
     });
   });
@@ -41,24 +36,7 @@ async function loadSettings() {
 // SAVE SETTINGS
 // ══════════════════════════════════════════════════════
 function saveSettings() {
-  const apiKey     = el('api-key').value.trim();
-  const aiProvider = el('ai-provider').value;
-
-  if (apiKey) {
-    if (aiProvider === 'anthropic' && !apiKey.startsWith('sk-ant-')) {
-      setStatus('⚠ Anthropic key should start with sk-ant-…', 'error');
-      return;
-    }
-    if (aiProvider === 'openai' && !apiKey.startsWith('sk-')) {
-      setStatus('⚠ OpenAI key usually starts with sk-…', 'error');
-      return;
-    }
-    // Gemini keys don't have a strict prefix, but usually are long alphanumeric strings
-  }
-
   const settings = {
-    apiKey:           apiKey,
-    aiProvider:       aiProvider,
     reminderInterval: parseInt(el('reminder-interval').value, 10),
     remindersEnabled: el('reminders-enabled').checked,
     guideStyle:       el('guide-style').value,
@@ -134,13 +112,12 @@ function clearTopics() {
 }
 
 function clearAllData() {
-  if (!confirm('Clear ALL BookMind data? This includes topics, guides, and your API key. Bookmarks in Chrome will NOT be deleted.')) return;
+  if (!confirm('Clear ALL BookMind data? This includes topics and guides. Bookmarks in Chrome will NOT be deleted.')) return;
   chrome.storage.local.clear(() => {
     setStatus('✓ All data cleared', 'success');
     updateDataStats();
 
     // Reset fields
-    el('api-key').value = '';
     el('reminders-enabled').checked = true;
     el('reminder-interval').value   = '24';
     el('guide-style').value         = 'comprehensive';
@@ -156,27 +133,13 @@ function clearAllData() {
 function bindEvents() {
   el('btn-save').addEventListener('click', saveSettings);
 
-  // New: Provider switching
-  el('ai-provider').addEventListener('change', updateProviderUI);
-
   el('reminders-enabled').addEventListener('change', e => {
     toggleIntervalField(e.target.checked);
-  });
-
-
-  el('btn-show-key').addEventListener('click', () => {
-    const input = el('api-key');
-    input.type  = input.type === 'password' ? 'text' : 'password';
   });
 
   el('btn-export').addEventListener('click', exportData);
   el('btn-clear-topics').addEventListener('click', clearTopics);
   el('btn-clear-all').addEventListener('click', clearAllData);
-
-  // Save on Enter in API key field
-  el('api-key').addEventListener('keydown', e => {
-    if (e.key === 'Enter') saveSettings();
-  });
 }
 
 // ══════════════════════════════════════════════════════
@@ -192,22 +155,5 @@ function setStatus(msg, type = '') {
 
 function toggleIntervalField(visible) {
   el('interval-field').style.display = visible ? 'block' : 'none';
-}
-
-function updateProviderUI() {
-  const provider = el('ai-provider').value;
-  const input    = el('api-key');
-  const hint     = el('api-key-hint');
-
-  if (provider === 'anthropic') {
-    input.placeholder = 'sk-ant-api03-…';
-    hint.innerHTML = 'Get your API key at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.';
-  } else if (provider === 'gemini') {
-    input.placeholder = 'AIzaSy…';
-    hint.innerHTML = 'Get your API key at <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a>.';
-  } else if (provider === 'openai') {
-    input.placeholder = 'sk-…';
-    hint.innerHTML = 'Get your API key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>.';
-  }
 }
 
